@@ -4,7 +4,7 @@
 # In[2]:
 
 # Name: youParse.py
-# Version: 1.3
+# Version: 1.4
 # Author: pantuts
 # Description: Parse URLs in Youtube User's Playlist (Video Playlist not Favorites)
 # Use python3 and later
@@ -13,75 +13,52 @@
 # This tool is for educational purposes only. Any damage you make will not affect the author.
 # Usage: python3 youParse.py youtubeURLhere
 
-# sudo pip install youtube-dl
-# download pafy from github
+# pip install yt-dlp
 
 import re
 import urllib.request
 import urllib.error
 import sys
-from pafy import pafy
+import yt_dlp
 from tkinter import *
 from tkinter import ttk
 import tkinter.constants as Tkconstants
 import tkinter.filedialog as tkFileDialog
 import os
-import subprocess 
+import subprocess
 from threading import Thread
 import queue as Queue
-import time 
+import time
 
 def crawl(url):
-    sTUBE = ''
-    cPL = ''
-    amp = 0
+    """Extract video URLs from a YouTube playlist using yt-dlp."""
     final_url = []
-    
-    if 'list=' in url:
-        eq = url.index('=') + 1
-        cPL = url[eq:]
-        if '&' in url:
-            amp = url.index('&')
-            cPL = url[eq:amp]
-            
-    else:
-        print('Incorrect Playlist.')
-        exit(1)
-    
+
+    ydl_opts = {
+        'quiet': True,
+        'extract_flat': True,
+        'no_warnings': True,
+    }
+
     try:
-        yTUBE = urllib.request.urlopen(url).read()
-        sTUBE = str(yTUBE)
-    except urllib.error.URLError as e:
-        print(e.reason)
-    
-    tmp_mat = re.compile(r'watch\?v=\S+?list=' + cPL)
-    mat = re.findall(tmp_mat, sTUBE)
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            playlist_info = ydl.extract_info(url, download=False)
 
-    if mat:
-        
-        if mat[0] == mat[1]:
-            mat.remove(mat[0]) #if there is duplicate, remove
-            
-        for PL in mat:
-            yPL = str(PL)
-            if '&' in yPL:
-                yPL_amp = yPL.index('&')
-            elif '\\u0026' in yPL:
-                yPL_amp = yPL.index('\\u0026')
+            if 'entries' in playlist_info:
+                for entry in playlist_info['entries']:
+                    if entry and 'url' in entry:
+                        video_url = f"https://www.youtube.com/watch?v={entry['id']}"
+                        final_url.append(video_url)
+                        print(video_url)
+            else:
+                print('No videos found in playlist.')
+                return [], 0
 
-            if yPL_amp > 0:
-                final_url.append('http://www.youtube.com/' + yPL[:yPL_amp].replace('\\', ''))
-                
-        i = 0
-        while i < len(mat):
-#             sys.stdout.write(final_url[i] + '\n')
-            i = i + 1
-        print(*final_url, sep = '\n')
-        return final_url, len(mat)
-        
-    else:
-        print('No videos found.')
-        exit(1)
+    except Exception as e:
+        print(f'Error extracting playlist: {e}')
+        return [], 0
+
+    return final_url, len(final_url)
         
 # if len(sys.argv) < 2 or len(sys.argv) > 2:
 #     print('USAGE: python3 youParse.py YOUTUBEurl')    
@@ -107,37 +84,86 @@ def askdirectory():
         print("Hick")
     
 
-# Get the list of videos
+# Get the list of videos - stores YouTube URLs for later processing
 def listParser(list_url, q, progressQ):
     final_url, l = crawl(list_url)
-    uset = set(final_url)
-    # print("Please hold on...")
-    # print(uset)
+    uset = list(dict.fromkeys(final_url))  # Remove duplicates while preserving order
     i = 0
     l = len(uset)
     linkArr = []
-    for u in uset:
-        url = u
 
-        video = pafy.new(url)
-        s = video.getbest()
-        fname = re.sub(r'[<>:\"\/\\|\?\*]+', "_", s.title)+"."+s.extension
-        # print(s.title)
-        # print(fname)
-        linkArr.append({
-            'url':s.url,
-            'title':s.title,
-            'ext':s.extension,
-            'filename':fname
-            })
-        # print(s.resolution, s.url)
-        i = i+1
-        # pb["value"] = int(i*100/l)
-        progressQ.put(int(i*100/l))
-        # print("Done: " + '{0:.2f}'.format(i*100/l) + " %")
-    # print("Finished Getting List...")
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+    }
+
+    for url in uset:
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                title = info.get('title', 'Unknown')
+
+                # Store the YouTube URL - we'll get fresh direct URL at download time
+                fname = re.sub(r'[<>:\"\/\\|\?\*]+', "_", title) + ".mp4"
+
+                linkArr.append({
+                    'youtube_url': url,  # Store original YouTube URL
+                    'title': title,
+                    'ext': 'mp4',
+                    'filename': fname
+                })
+                print(f"Parsed: {title}")
+
+        except Exception as e:
+            print(f"Error parsing {url}: {e}")
+
+        i = i + 1
+        progressQ.put(int(i * 100 / l))
+
     q.put(linkArr)
-    # return linkArr
+
+
+def get_direct_url(youtube_url):
+    """Get fresh direct download URL for a YouTube video (progressive format for IDM)."""
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+
+            # Look for progressive formats (format 22=720p, 18=360p) that work with IDM
+            # These have direct URLs starting with googlevideo.com/videoplayback
+            # HLS/DASH manifests (manifest.googlevideo.com) don't work with IDM
+
+            best_format = None
+            best_height = 0
+
+            for fmt in info.get('formats', []):
+                url = fmt.get('url', '')
+                has_video = fmt.get('vcodec') and fmt.get('vcodec') != 'none'
+                has_audio = fmt.get('acodec') and fmt.get('acodec') != 'none'
+                height = fmt.get('height', 0) or 0
+
+                # Skip HLS/DASH manifests - IDM can't handle them
+                if 'manifest.googlevideo.com' in url or url.endswith('.m3u8'):
+                    continue
+
+                # Only select formats with both video AND audio (progressive)
+                if has_video and has_audio and url:
+                    if height > best_height:
+                        best_height = height
+                        best_format = fmt
+
+            if best_format:
+                return best_format['url'], best_format.get('ext', 'mp4')
+
+            return None, None
+    except Exception as e:
+        print(f"Error getting direct URL: {e}")
+        return None, None
 
 
 # Fire IDM for downloading
@@ -167,8 +193,23 @@ def downloaderCoroutine():
     size = len(linkArr)
     done = 0
     for l in linkArr:
+        # Get fresh direct URL right before downloading (URLs expire quickly)
+        print(f"Getting direct URL for: {l['title']}")
+        direct_url, ext = get_direct_url(l['youtube_url'])
+
+        if not direct_url:
+            print(f"Failed to get URL for: {l['title']}")
+            done = done + 1
+            downStatus = int(done*100/size)
+            continue
+
+        # Update filename extension if different
+        fname = l['filename']
+        if ext and ext != l['ext']:
+            fname = re.sub(r'\.[^.]+$', f'.{ext}', fname)
+
         # C:\Program Files (x86)\Internet Download Manager\IDMan.exe" /n /d <link> /p <path> /f <filename>
-        comm = '\"C:\Program Files (x86)\Internet Download Manager\IDMan.exe\" /n /d \"' + l['url'] + '\" /p \"' + savePath.get() + '\" /f \"' + l['filename'] + '\"'
+        comm = '\"C:\\Program Files (x86)\\Internet Download Manager\\IDMan.exe\" /n /d \"' + direct_url + '\" /p \"' + savePath.get() + '\" /f \"' + fname + '\"'
         # os.system(comm)
         prcs.append(subprocess.Popen(comm))
         time.sleep(2)
@@ -176,7 +217,7 @@ def downloaderCoroutine():
         downStatus = int(done*100/size)
         counter = counter + 1
         print("Counter: "+str(counter))
-        print(l['filename'])        
+        print(fname)
         if(counter >= limit):
             print("Press download again to continue...")
             counter = 0

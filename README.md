@@ -1,64 +1,77 @@
 # YDM (Youtube Playlist Downloader Addon for IDM)
 
-YDM is an open source addon for **Internet Download Manager** (IDM) for downloading videos from Youtube playlists.
+YDM is an open source addon for **Internet Download Manager** (IDM) for downloading videos from YouTube playlists.
 
 ## Table of Contents
 * [Features](#features)
 * [Requirements](#requirements)
 * [Installation](#installation)
 * [Usage Example](#usage)
-* [Team Members](#team-members)
+* [Limitations](#limitations)
+* [Contributors](#team-members)
 
 ## <a name="features"></a>Features
-* Download any playlists from Youtube
-* Choose which videos to download
-* Save all videos to a folder
-* Uses IDM
+* Download any playlist from YouTube
+* Parse playlist to extract all video links
+* Save all videos to a custom folder
+* Integrates with Internet Download Manager (IDM)
+* Simple GUI interface
 
 ## <a name="requirements"></a>Requirements
-This program is only for `Windows` and requires `Python 3.4` or greater installed in your system. It also need the following python modules to be installed in your system. 
+This program is only for `Windows` and requires:
 
-* `youtube-dl`
-
+* `Python 3.8` or greater
+* `Internet Download Manager (IDM)` installed at the default location
+* `yt-dlp` Python module
 
 ## <a name="installation"></a>Installation
 
 **Installing the program**
 
-If your system meets all the requirements downlaod this program by clicking the <a href="https://github.com/studiobytestorm/YDM/archive/master.zip">![downloadbutton](http://i.stack.imgur.com/0SWhD.png)</a> button above. Unzip it into a folder say `C:\YDM`. Then open command prompt and run 
+Download this program by clicking the <a href="https://github.com/studiobytestorm/YDM/archive/master.zip">![downloadbutton](http://i.stack.imgur.com/0SWhD.png)</a> button above. Unzip it into a folder, e.g., `C:\YDM`. Then open command prompt and run:
 
-```
-C:\Users\Name> cd C:\YDM
-C:\YDM> python yListerFull.py
+```bash
+cd C:\YDM
+python yListerFull.py
 ```
 
 **Installing the requirements**
 
-You can install `Python 3.4` from [here](https://www.python.org/). Once you have installed Python you can install `youtube-dl` using pip.
+1. Install `Python 3.8+` from [python.org](https://www.python.org/)
+2. Install `yt-dlp` using pip:
 
+```bash
+pip install yt-dlp
 ```
-pip install youtube-dl
-```
-
 
 ## <a name="usage"></a>Usage Example
-Here is an example of how to use this program.
 
+Run the program:
+
+```bash
+python yListerFull.py
 ```
-C:\YDM> python yListerFull.py
-```
-Once you execute the above line it will open up a GUI as shown below. Enter an Youtube playlist url and the path to save the downloaded files. Then press the parse button. Once parsing is complete press download button to start downloading first 4 videos and once finished click download again to continue downloading the next 4 videos and so on.
 
-**Here's a screeshot...**
+This will open a GUI window:
 
-<img src="http://i.stack.imgur.com/R0NRb.png" alt="Screeshot1" style="width: 100%;"/>
+1. **Playlist URL**: Paste a YouTube playlist URL
+2. **Save Path**: Select the folder where videos will be saved
+3. **Parse**: Click to extract video links from the playlist
+4. **Download**: Once parsing is complete, click to send videos to IDM (downloads 4 at a time)
+
+**Screenshot:**
+
+<img src="http://i.stack.imgur.com/R0NRb.png" alt="Screenshot" style="width: 100%;"/>
+
+## <a name="limitations"></a>Limitations
+* Maximum video quality is **360p** (or 720p when available) due to YouTube's streaming format restrictions
+* Higher resolutions (1080p+) on YouTube use separate video/audio streams that require merging, which IDM cannot handle
+* For higher quality downloads, consider using `yt-dlp` directly with FFmpeg
 
 ## <a name="team-members"></a>Contributors
 * "Bishal Santra" <bsantraigi@gmail.com>
 
 ## <a name="refs"></a>References
-* [rg3/youtube-dl](https://github.com/rg3/youtube-dl/)
-* [mps-youtube/pafy](https://github.com/mps-youtube/pafy)
+* [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) - YouTube video extraction library
 
-
-----------
+---
