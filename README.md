@@ -1,77 +1,58 @@
-# YDM (Youtube Playlist Downloader Addon for IDM)
+# YDM Pro (High-Performance YouTube Playlist Downloader)
 
-YDM is an open source addon for **Internet Download Manager** (IDM) for downloading videos from YouTube playlists.
+**YDM Pro** is a robust, threaded downloader built for power users. It moves beyond simple scripts to offer a full dashboard for managing YouTube playlist downloads with support for 4K/8K quality, concurrent downloading, and pause/resume capabilities.
 
-## Table of Contents
-* [Features](#features)
-* [Requirements](#requirements)
-* [Installation](#installation)
-* [Usage Example](#usage)
-* [Limitations](#limitations)
-* [Contributors](#team-members)
+## 🚀 Key Features
 
-## <a name="features"></a>Features
-* Download any playlist from YouTube
-* Parse playlist to extract all video links
-* Save all videos to a custom folder
-* Integrates with Internet Download Manager (IDM)
-* Simple GUI interface
+*   **📺 High Quality Support**: Download videos in **4K, 2K, 1080p, 720p**, or 480p.
+    *   *Automatically merges best video+audio streams using FFmpeg.*
+*   **⚡ Concurrent Parsing & Downloading**: "Stream Parsing" engine lets you start downloading videos the moment they are found, without waiting for the whole playlist to parse.
+*   **📋 Advanced Queue Management**:
+    *   **Dashboard View**: See real-time status, size, progress, speed, and ETA for every video in a scrollable table.
+    *   **Pause/Resume**: Immediately pause active downloads (network cut? no problem) and resume exactly where you left off.
+    *   **Retry Failed**: One-click retry for any videos that failed due to network errors.
+    *   **Selection**: Check/Uncheck specific videos to skip ones you don't need.
+*   **🔗 Universal Support**: Works with Playlist URLs and Single Video URLs.
 
-## <a name="requirements"></a>Requirements
-This program is only for `Windows` and requires:
+## 🛠️ Requirements
 
-* `Python 3.8` or greater
-* `Internet Download Manager (IDM)` installed at the default location
-* `yt-dlp` Python module
+*   **Python 3.8+**
+*   **FFmpeg** (Required for 1080p+ merging):
+    *   Download from [ffmpeg.org](https://ffmpeg.org/download.html).
+    *   The app is pre-configured to look in `C:\ffmpeg-...\bin`, or just add it to your System PATH.
+*   **Python Modules**:
+    ```bash
+    pip install yt-dlp
+    ```
+    *Note: `tkinter` is usually included with Python.*
 
-## <a name="installation"></a>Installation
+## 📦 Installation & Usage
 
-**Installing the program**
+1.  **Clone/Download** this repository.
+2.  **Install dependencies** (see above).
+3.  **Run the application**:
+    ```bash
+    python yListerFull.py
+    ```
 
-Download this program by clicking the <a href="https://github.com/studiobytestorm/YDM/archive/master.zip">![downloadbutton](http://i.stack.imgur.com/0SWhD.png)</a> button above. Unzip it into a folder, e.g., `C:\YDM`. Then open command prompt and run:
+### How to Use
+1.  **Paste URL**: Enter a YouTube Playlist or Video URL.
+2.  **Select Quality**: Choose your target resolution (e.g., "1080p (HD)").
+3.  **Pars/Start**:
+    *   Click **Parse** to load the video list.
+    *   Check **Auto-Start Download** to begin immediately.
+4.  **Manage**:
+    *   Use the [☑] checkboxes to skip videos.
+    *   Use **Pause Queue** / **Resume Queue** to control bandwidth.
+    *   Use **Retry Failed** if your internet drops.
 
-```bash
-cd C:\YDM
-python yListerFull.py
-```
+## 📸 Screenshots
 
-**Installing the requirements**
+*(Add your screenshot here)*
 
-1. Install `Python 3.8+` from [python.org](https://www.python.org/)
-2. Install `yt-dlp` using pip:
+## ⚠️ Note on IDM
+This version supersedes the old IDM-based tool. `yt-dlp` + FFmpeg is superior because it can download separate video/audio streams (Dash) and merge them, allowing for **1080p/4K** downloads which IDM often cannot handle smoothly for YouTube.
 
-```bash
-pip install yt-dlp
-```
-
-## <a name="usage"></a>Usage Example
-
-Run the program:
-
-```bash
-python yListerFull.py
-```
-
-This will open a GUI window:
-
-1. **Playlist URL**: Paste a YouTube playlist URL
-2. **Save Path**: Select the folder where videos will be saved
-3. **Parse**: Click to extract video links from the playlist
-4. **Download**: Once parsing is complete, click to send videos to IDM (downloads 4 at a time)
-
-**Screenshot:**
-
-<img src="http://i.stack.imgur.com/R0NRb.png" alt="Screenshot" style="width: 100%;"/>
-
-## <a name="limitations"></a>Limitations
-* Maximum video quality is **360p** (or 720p when available) due to YouTube's streaming format restrictions
-* Higher resolutions (1080p+) on YouTube use separate video/audio streams that require merging, which IDM cannot handle
-* For higher quality downloads, consider using `yt-dlp` directly with FFmpeg
-
-## <a name="team-members"></a>Contributors
-* "Bishal Santra" <bsantraigi@gmail.com>
-
-## <a name="refs"></a>References
-* [yt-dlp/yt-dlp](https://github.com/yt-dlp/yt-dlp) - YouTube video extraction library
-
----
+## 🤝 Contributors
+*   Original Author: [bsantraigi](https://github.com/bsantraigi)
+*   Current Maintained Version: **YDM Pro**
