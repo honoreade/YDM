@@ -1,518 +1,395 @@
-
 # coding: utf-8
-
-# In[2]:
-
-# Name: youParse.py
-# Version: 1.4
-# Author: pantuts
-# Description: Parse URLs in Youtube User's Playlist (Video Playlist not Favorites)
-# Use python3 and later
-# Agreement: You can use, modify, or redistribute this tool under
-# the terms of GNU General Public License (GPLv3).
-# This tool is for educational purposes only. Any damage you make will not affect the author.
-# Usage: python3 youParse.py youtubeURLhere
-
-# pip install yt-dlp
+# Description: Advanced Youtube Playlist Downloader with UI
+# Usage: python3 yListerFull.py
 
 import re
-import urllib.request
-import urllib.error
 import sys
 import yt_dlp
 from tkinter import *
 from tkinter import ttk
-import tkinter.constants as Tkconstants
+from tkinter import messagebox
 import tkinter.filedialog as tkFileDialog
 import os
 import subprocess
-from threading import Thread
+from threading import Thread, Lock
 import queue as Queue
 import time
+import datetime
 
-# FFmpeg path for high quality downloads
+# FFmpeg path
 FFMPEG_PATH = r"C:\ffmpeg-2026-01-12-git-21a3e44fbe-full_build\bin"
-
-# Add FFmpeg to PATH so yt-dlp can find it
 if FFMPEG_PATH not in os.environ.get('PATH', ''):
     os.environ['PATH'] = FFMPEG_PATH + os.pathsep + os.environ.get('PATH', '')
 
-def crawl(url):
-    """Extract video URLs from a YouTube playlist using yt-dlp."""
-    final_url = []
+class YoutubeDownloaderApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Youtube Playlist Downloader Pro")
+        self.root.geometry("900x650") 
+        self.root.resizable(True, True)
 
-    ydl_opts = {
-        'quiet': True,
-        'extract_flat': True,
-        'no_warnings': True,
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            playlist_info = ydl.extract_info(url, download=False)
-
-            if 'entries' in playlist_info:
-                for entry in playlist_info['entries']:
-                    if entry and 'url' in entry:
-                        video_url = f"https://www.youtube.com/watch?v={entry['id']}"
-                        final_url.append(video_url)
-                        print(video_url)
-            # Handle single video URL
-            elif 'id' in playlist_info:
-                video_url = f"https://www.youtube.com/watch?v={playlist_info['id']}"
-                final_url.append(video_url)
-                print(f"Found single video: {video_url}")
-            else:
-                print('No videos found in playlist.')
-                return [], 0
-
-    except Exception as e:
-        print(f'Error extracting playlist: {e}')
-        return [], 0
-
-    return final_url, len(final_url)
+        # Variables
+        self.playlist_url = StringVar()
+        self.save_path = StringVar(value=os.getcwd())
+        self.download_mode = StringVar(value="hq")
+        self.resolution_var = StringVar(value="1080p (HD)")
+        self.auto_start = BooleanVar(value=True)
+        self.is_parsing = False
+        self.is_downloading = False
+        self.pause_event = False # Simple flag for pause (not fully implemented in yt-dlp flow yet without complex threading)
         
-# if len(sys.argv) < 2 or len(sys.argv) > 2:
-#     print('USAGE: python3 youParse.py YOUTUBEurl')    
-#     exit(1)
-    
-# else:
-#     url = sys.argv[1]
-#     if 'http' not in url:
-#         url = 'http://' + url
-#     listParser(url)
+        # Data
+        self.videos_dict = {} # Map iid -> video_data
+        self.parse_queue = Queue.Queue()
+        self.download_queue = Queue.Queue()
+        self.completed_count = 0
+        self.total_count = 0
+        self.total_downloading = 0
+        
+        # Locks
+        self.ui_lock = Lock()
 
-dir_opt = options = {}
-options['initialdir'] = 'C:/'
-options['mustexist'] = False
-options['title'] = 'This is a title'
+        self.setup_ui()
 
-def askdirectory():
-    """Returns a selected directoryname."""
-    newPath = tkFileDialog.askdirectory(**dir_opt)
-    if(newPath != ""):
-        savePath.set(newPath)
-    else:
-        print("Hick")
-    
+    def setup_ui(self):
+        # Main Container
+        main_frame = ttk.Frame(self.root, padding="10")
+        main_frame.pack(fill=BOTH, expand=True)
 
-# Get the list of videos - stores YouTube URLs for later processing
-def listParser(list_url, q, progressQ):
-    final_url, l = crawl(list_url)
-    uset = list(dict.fromkeys(final_url))  # Remove duplicates while preserving order
-    i = 0
-    l = len(uset)
-    linkArr = []
+        # --- Top Section: Inputs ---
+        input_frame = ttk.LabelFrame(main_frame, text="Configuration", padding="10")
+        input_frame.pack(fill=X, pady=(0, 10))
 
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-    }
+        # URL Input
+        ttk.Label(input_frame, text="Playlist/Video URL:").grid(row=0, column=0, sticky=W, padx=5)
+        ttk.Entry(input_frame, textvariable=self.playlist_url, width=60).grid(row=0, column=1, padx=5, sticky=EW)
+        ttk.Button(input_frame, text="Parse", command=self.start_parsing).grid(row=0, column=2, padx=5)
 
-    for url in uset:
+        # Save Path
+        ttk.Label(input_frame, text="Save Path:").grid(row=1, column=0, sticky=W, padx=5, pady=5)
+        ttk.Entry(input_frame, textvariable=self.save_path, width=60).grid(row=1, column=1, padx=5, sticky=EW)
+        ttk.Button(input_frame, text="Browse", command=self.browse_folder).grid(row=1, column=2, padx=5)
+
+        # Options
+        opts_frame = ttk.Frame(input_frame)
+        opts_frame.grid(row=2, column=0, columnspan=3, sticky=W, pady=5)
+        
+        ttk.Label(opts_frame, text="Quality:").pack(side=LEFT, padx=5)
+        res_combo = ttk.Combobox(opts_frame, textvariable=self.resolution_var, state="readonly", width=15)
+        res_combo['values'] = ("Best (4K/8K)", "1440p (2K)", "1080p (HD)", "720p (HD)", "480p")
+        res_combo.pack(side=LEFT, padx=5)
+
+        ttk.Checkbutton(opts_frame, text="Auto-Start Download", variable=self.auto_start).pack(side=LEFT, padx=15)
+
+        input_frame.columnconfigure(1, weight=1)
+
+        # --- Middle Section: List View ---
+        list_frame = ttk.LabelFrame(main_frame, text="Video Queue", padding="5")
+        list_frame.pack(fill=BOTH, expand=True, pady=(0, 10))
+
+        # Treeview Scrollbar
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=RIGHT, fill=Y)
+
+        # Treeview
+        columns = ("title", "status", "size", "progress", "speed_eta")
+        self.tree = ttk.Treeview(list_frame, columns=columns, selectmode="extended", yscrollcommand=scrollbar.set)
+        
+        self.tree.heading("#0", text="", anchor=CENTER) # Checkbox column
+        self.tree.column("#0", width=40, stretch=False, anchor=CENTER)
+        
+        self.tree.heading("title", text="Title", anchor=W)
+        self.tree.column("title", width=300, minwidth=200)
+        
+        self.tree.heading("status", text="Status", anchor=W)
+        self.tree.column("status", width=120, minwidth=100)
+        
+        self.tree.heading("size", text="Size", anchor=E)
+        self.tree.column("size", width=80, minwidth=60)
+        
+        self.tree.heading("progress", text="Progress", anchor=W)
+        self.tree.column("progress", width=150, minwidth=100) # Text progress bar
+
+        self.tree.heading("speed_eta", text="Speed / ETA", anchor=W)
+        self.tree.column("speed_eta", width=150, minwidth=100)
+
+        self.tree.pack(fill=BOTH, expand=True)
+        scrollbar.config(command=self.tree.yview)
+
+        # Bindings if needed (e.g., right click)
+        
+        # --- Bottom Section: Status & Controls ---
+        status_frame = ttk.Frame(main_frame)
+        status_frame.pack(fill=X)
+
+        self.status_label = ttk.Label(status_frame, text="Ready.")
+        self.status_label.pack(side=LEFT)
+
+        controls_frame = ttk.Frame(status_frame)
+        controls_frame.pack(side=RIGHT)
+
+        ttk.Button(controls_frame, text="Start Download", command=self.start_download_manager).pack(side=LEFT, padx=2)
+        # ttk.Button(controls_frame, text="Pause", command=self.toggle_pause).pack(side=LEFT, padx=2) # Processing pause is tricky without Process killing
+        ttk.Button(controls_frame, text="Clear Finished", command=self.clear_finished).pack(side=LEFT, padx=2)
+
+    def browse_folder(self):
+        d = tkFileDialog.askdirectory()
+        if d: self.save_path.set(d)
+
+    def add_video_to_list(self, video_data):
+        # Insert into Treeview
+        # Using checkmark chars for the #0 column to simulate checkbox state (simplified)
+        iid = self.tree.insert("", END, text="☑", values=(
+            video_data['title'],
+            "Queued",
+            "-",
+            "Waiting...",
+            "-"
+        ))
+        video_data['iid'] = iid
+        video_data['state'] = 'queued' # queued, parsing, downloading, completed, error, skipped
+        self.videos_dict[iid] = video_data
+        
+        # If auto-start is allowed, we can signal the downloader immediately
+        # But we use the manager loop for that
+
+    def start_parsing(self):
+        url = self.playlist_url.get()
+        if not url: return
+
+        self.is_parsing = True
+        self.status_label.config(text="Parsing playlist...")
+        
+        # Clear previous if new parse? Or append? appending is safer
+        # self.tree.delete(*self.tree.get_children())
+        
+        t = Thread(target=self.run_crawler, args=(url,))
+        t.daemon = True
+        t.start()
+        
+        if self.auto_start.get():
+            self.start_download_manager()
+
+    def run_crawler(self, url):
+        ydl_opts = {
+            'quiet': True,
+            'extract_flat': True, # Fast extraction, get metadata later or now? 
+            # Flat extract gives minimal info. For "Title" we might need a bit more, 
+            # but deep extract is slow. Let's do flat then `extract_info` per video in downloader?
+            # Or lazy load.
+            # Ideally we want titles immediately. `extract_flat` usually gives titles.
+            'no_warnings': True,
+            'ignoreerrors': True,
+        }
+        
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # If single video, this might behave differently with extract_flat
+                # simple check:
                 info = ydl.extract_info(url, download=False)
-                title = info.get('title', 'Unknown')
-
-                # Store the YouTube URL - we'll get fresh direct URL at download time
-                fname = re.sub(r'[<>:\"\/\\|\?\*]+', "_", title) + ".mp4"
-
-                linkArr.append({
-                    'youtube_url': url,  # Store original YouTube URL
-                    'title': title,
-                    'ext': 'mp4',
-                    'filename': fname
-                })
-                print(f"Parsed: {title}")
-
+                
+                if 'entries' in info:
+                    # It's a playlist
+                    for entry in info['entries']:
+                        if not entry: continue
+                        self.process_parsed_entry(entry)
+                else:
+                    # Single video
+                    self.process_parsed_entry(info)
+                    
         except Exception as e:
-            print(f"Error parsing {url}: {e}")
+            print(f"Parse Error: {e}")
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Parse error: {e}"))
+            
+        self.is_parsing = False
+        self.root.after(0, lambda: self.status_label.config(text="Parsing complete."))
 
-        i = i + 1
-        progressQ.put(int(i * 100 / l))
-
-    q.put(linkArr)
-
-
-def get_direct_url(youtube_url):
-    """Get fresh direct download URL for a YouTube video (progressive format for IDM)."""
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-    }
-
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(youtube_url, download=False)
-
-            # Look for progressive formats (format 22=720p, 18=360p) that work with IDM
-            # These have direct URLs starting with googlevideo.com/videoplayback
-            # HLS/DASH manifests (manifest.googlevideo.com) don't work with IDM
-
-            best_format = None
-            best_height = 0
-
-            for fmt in info.get('formats', []):
-                url = fmt.get('url', '')
-                has_video = fmt.get('vcodec') and fmt.get('vcodec') != 'none'
-                has_audio = fmt.get('acodec') and fmt.get('acodec') != 'none'
-                height = fmt.get('height', 0) or 0
-
-                # Skip HLS/DASH manifests - IDM can't handle them
-                if 'manifest.googlevideo.com' in url or url.endswith('.m3u8'):
-                    continue
-
-                # Only select formats with both video AND audio (progressive)
-                if has_video and has_audio and url:
-                    if height > best_height:
-                        best_height = height
-                        best_format = fmt
-
-            if best_format:
-                return best_format['url'], best_format.get('ext', 'mp4')
-
-            return None, None
-    except Exception as e:
-        print(f"Error getting direct URL: {e}")
-        return None, None
-
-
-def download_high_quality(youtube_url, output_path, filename, max_height=None, progress_callback=None):
-    """Download video using yt-dlp with FFmpeg for best quality (1080p+)."""
-    # Sanitize filename
-    safe_filename = re.sub(r'[<>:\"\/\\|\?\*]+', "_", filename)
-    safe_filename = re.sub(r'\.[^.]+$', '', safe_filename)
-
-    output_template = os.path.join(output_path, safe_filename + '.mp4')
-
-    # Construct format string based on max_height
-    if max_height and max_height != "Best":
-        # Limit height, prefer mp4 video and m4a audio for compatibility
-        # Try to get the best video that fits the height limit
-        format_str = f'bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]/best'
-    else:
-        # Best available (4K/8K), no limits
-        format_str = 'bestvideo+bestaudio/best'
-
-    ydl_opts = {
-        'format': format_str,
-        'merge_output_format': 'mp4',
-        'outtmpl': output_template,
-        'ffmpeg_location': FFMPEG_PATH,
-        'verbose': True,
-        'no_warnings': False,
-        'keepvideo': False,
-        'overwrites': True,
+    def process_parsed_entry(self, entry):
+        title = entry.get('title', 'Unknown')
+        video_id = entry.get('id')
+        url = entry.get('url') or entry.get('webpage_url')
+        if not url:
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            
+        video_data = {
+            'title': title,
+            'url': url,
+            'filename': re.sub(r'[<>:\"\/\\|\?\*]+', "_", title)
+        }
         
-        # Ensure we prioritize resolution
-        'format_sort': ['res', 'ext:mp4:m4a'],
+        # Thread-safe UI update
+        self.root.after(0, lambda: self.add_video_to_list(video_data))
+
+
+    def start_download_manager(self):
+        if self.is_downloading: return
+        self.is_downloading = True
         
-        # Connection & Anti-throttling
-        'retries': 10,
-        'fragment_retries': 10,
-        'file_access_retries': 5,
-        'extractor_retries': 5,
-        # Removed 'extractor_args' to allow default clients (web/android/ios) for maximum stream availability
+        t = Thread(target=self.download_manager_loop)
+        t.daemon = True
+        t.start()
+
+    def download_manager_loop(self):
+        # Continuously look for 'queued' items in treeview and start download
+        # We process 1 at a time or thread pool? Let's do 1 at a time for safety first (sequential download is stable)
+        # Maybe 2 concurrent? Let's stick to sequential to avoid IP bans, but "Parsing while downloading" is the key feature.
         
-        # Explicitly disable external configs and cookie extraction
-        'ignoreerrors': True,
-        'ignore_config': True,
-        'cookiesfrombrowser': None,
+        while True:
+            # Find next queued item
+            next_iid = None
+            
+            with self.ui_lock:
+                # We need to iterate tree items safely. 
+                # Tkinter objects aren't thread safe, but we can't access them here easily without deadlock risk if we aren't careful.
+                # Actually, standard practice: get list of IIDs in main thread?
+                pass 
+                
+            # Better: Ask main thread for next queued item
+            q = Queue.Queue()
+            self.root.after(0, lambda: q.put(self.get_next_queued_iid()))
+            next_iid = q.get()
+            
+            if next_iid:
+                # Download it
+                self.process_video(next_iid)
+            else:
+                # If parsing is done and no more files, stop
+                if not self.is_parsing:
+                    time.sleep(1) # Wait a bit to be sure
+                    # Check again
+                    self.root.after(0, lambda: q.put(self.get_next_queued_iid()))
+                    if not q.get():
+                        break
+                
+                time.sleep(1)
+
+        self.is_downloading = False
+        self.root.after(0, lambda: self.status_label.config(text="All downloads complete."))
+
+    def get_next_queued_iid(self):
+        # Run on main thread
+        for iid in self.tree.get_children():
+            # Check if checked (text="☑") and status="Queued"
+            item = self.tree.item(iid)
+            if item['text'] == "☑" and item['values'][1] == "Queued":
+                return iid
+        return None
+
+    def process_video(self, iid):
+        # Update status
+        self.update_row(iid, status="Downloading...", progress="Starting...")
         
-        # Network
-        'sleep_interval': 2,
-        'max_sleep_interval': 5,
-        'sleep_interval_requests': 1,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-us,en;q=0.5',
-        },
-    }
-
-    try:
-        print(f"[DEBUG] FFmpeg path: {FFMPEG_PATH}")
-        print(f"[DEBUG] Output: {output_template}")
-        print(f"[DEBUG] YouTube URL: {youtube_url}")
-        print(f"[DEBUG] Quality: {max_height if max_height else 'Best'}")
+        video_data = self.videos_dict[iid]
+        url = video_data['url']
+        filename = video_data['filename']
+        output_path = self.save_path.get()
         
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([youtube_url])
-        print(f"[DEBUG] Download complete: {output_template}")
-        return True, output_template
-    except Exception as e:
-        print(f"Error downloading {filename}: {e}")
-        import traceback
-        traceback.print_exc()
-        return False, str(e)
-
-
-def download_high_quality_batch(linkArr, output_path, status_callback=None, max_height=None):
-    """Download all videos in high quality mode using yt-dlp + FFmpeg."""
-    total = len(linkArr)
-    completed = 0
-
-    for item in linkArr:
-        youtube_url = item['youtube_url']
-        title = item['title']
-        filename = item['filename']
-
-        print(f"\n[{completed + 1}/{total}] Downloading: {title}")
-
-        success, result = download_high_quality(youtube_url, output_path, filename, max_height)
-
-        if success:
-            print(f"✓ Completed: {title}")
+        # Prepare options
+        res_str = self.resolution_var.get()
+        height_map = {
+            "Best (4K/8K)": "Best",
+            "1440p (2K)": "1440",
+            "1080p (HD)": "1080",
+            "720p (HD)": "720",
+            "480p": "480"
+        }
+        max_height = height_map.get(res_str, "Best")
+        
+        if max_height and max_height != "Best":
+            format_str = f'bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]/best'
         else:
-            print(f"✗ Failed: {title} - {result}")
+            format_str = 'bestvideo+bestaudio/best'
 
-        completed += 1
-        if status_callback:
-            status_callback(int(completed * 100 / total))
+        safe_filename = filename # Extension handled by yt-dlp
+        output_template = os.path.join(output_path, f"{safe_filename}.%(ext)s")
 
-    print(f"\n=== Download Complete: {completed}/{total} videos ===")
-    return completed
+        def progress_hook(d):
+            if d['status'] == 'downloading':
+                try:
+                    p = d.get('_percent_str', '0%').strip()
+                    s = d.get('_speed_str', '0B/s').strip()
+                    e = d.get('_eta_str', '?:??').strip()
+                    size = d.get('_total_bytes_str') or d.get('_total_bytes_estimate_str') or "?"
+                    
+                    # Construct progress bar visual
+                    # Simple text for now: "|||||.... 45%"
+                    
+                    self.root.after(0, lambda: self.update_row(
+                        iid=iid,
+                        status="Downloading",
+                        size=size,
+                        progress=p,
+                        speed_eta=f"{s} - {e}"
+                    ))
+                except:
+                    pass
+            elif d['status'] == 'finished':
+                self.root.after(0, lambda: self.update_row(iid, status="Processing...", progress="100%"))
+
+        ydl_opts = {
+            'format': format_str,
+            'merge_output_format': 'mp4',
+            'outtmpl': output_template,
+            'ffmpeg_location': FFMPEG_PATH,
+            'progress_hooks': [progress_hook],
+            'no_warnings': True,
+            'ignoreerrors': True,
+            'quiet': True, # We use hooks for output
+            'format_sort': ['res', 'ext:mp4:m4a'],
+            'ignore_config': True,
+            'cookiesfrombrowser': None,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            },
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+            self.root.after(0, lambda: self.update_row(iid, status="Completed", progress="100%", speed_eta="Done"))
+        except Exception as e:
+            self.root.after(0, lambda: self.update_row(iid, status="Error", speed_eta=str(e)))
 
 
-# Fire IDM for downloading (or use yt-dlp for high quality)
-def downloadVideos():
-    global allDownComplete
-    global downGenerator
-    global downStatus
-
-    # Check which mode is selected
-    mode = downloadMode.get()
-
-    if mode == "hq":
-        # High Quality Mode - use yt-dlp + FFmpeg
-        if q.empty():
-            print("Download queue not ready yet.")
-            return
-
-        print("=== HIGH QUALITY MODE (yt-dlp + FFmpeg) ===")
-        print("Downloading best available quality (up to 4K)...")
-
-        linkArr = q.get()
-
-        def status_update(progress):
-            global downStatus
-            downStatus = progress
-
-        # Run in a separate thread to not block UI
-        def hq_download_thread():
-            global downStatus
-            global allDownComplete
-            downStatus = 0
+    def update_row(self, iid, status=None, size=None, progress=None, speed_eta=None):
+        try:
+            current_values = self.tree.item(iid)['values']
+            # values: title, status, size, progress, speed_eta
+            new_values = list(current_values)
             
-            # Map selection to height value
-            res_str = resolutionVar.get()
-            height_map = {
-                "Best (4K/8K)": "Best",
-                "1440p (2K)": "1440",
-                "1080p (HD)": "1080",
-                "720p (HD)": "720",
-                "480p": "480"
-            }
-            max_height = height_map.get(res_str, "Best")
+            if status: new_values[1] = status
+            if size: new_values[2] = size
+            if progress: new_values[3] = progress
+            if speed_eta: new_values[4] = speed_eta
             
-            root.after(100, update_downStatus)
-            download_high_quality_batch(linkArr, savePath.get(), status_update, max_height)
-            downStatus = 100
-            allDownComplete = True
-
-        allDownComplete = False
-        hq_thread = Thread(target=hq_download_thread)
-        hq_thread.daemon = True
-        hq_thread.start()
-    else:
-        # IDM Mode - original behavior
-        print("=== IDM MODE (max 720p) ===")
-        print("Start Download next 4 videos")
-        if allDownComplete:
-            if q.empty():
-                print("Download queue not ready yet.")
-                return
-            allDownComplete = False
-            downGenerator = downloaderCoroutine()
-            print(next(downGenerator))
-        else:
-            print(next(downGenerator))
-
-def downloaderCoroutine():
-    global downStatus
-    downStatus = 0
-    root.after(100, update_downStatus)
-    linkArr = q.get()
-    counter = 0
-    limit = 4
-    prcs = []
-
-    size = len(linkArr)
-    done = 0
-    for l in linkArr:
-        # Get fresh direct URL right before downloading (URLs expire quickly)
-        print(f"Getting direct URL for: {l['title']}")
-        direct_url, ext = get_direct_url(l['youtube_url'])
-
-        if not direct_url:
-            print(f"Failed to get URL for: {l['title']}")
-            done = done + 1
-            downStatus = int(done*100/size)
-            continue
-
-        # Update filename extension if different
-        fname = l['filename']
-        if ext and ext != l['ext']:
-            fname = re.sub(r'\.[^.]+$', f'.{ext}', fname)
-
-        # C:\Program Files (x86)\Internet Download Manager\IDMan.exe" /n /d <link> /p <path> /f <filename>
-        comm = '\"C:\\Program Files (x86)\\Internet Download Manager\\IDMan.exe\" /n /d \"' + direct_url + '\" /p \"' + savePath.get() + '\" /f \"' + fname + '\"'
-        # os.system(comm)
-        prcs.append(subprocess.Popen(comm))
-        time.sleep(2)
-        done = done + 1
-        downStatus = int(done*100/size)
-        counter = counter + 1
-        print("Counter: "+str(counter))
-        print(fname)
-        if(counter >= limit):
-            print("Press download again to continue...")
-            counter = 0
-            if done == size:
-                allDownComplete = True
-                return
-            yield downStatus
-
-def update_downStatus():
-    downloadPb["value"] = downStatus
-    if(downStatus == 100):
-        return
-    root.after(100, update_downStatus)
-
-def update_bar(parserThread):
-    if not progressQ.empty():
-        p = progressQ.get()
-        pb["value"] = p
-        if p == 100:            
-            parserThread.join()
-            print("Parsing Complete")
+            self.tree.item(iid, values=new_values)
             
-            # Auto-start download if enabled
-            if autoStartVar.get():
-                print("Auto-starting download...")
-                downloadVideos()
-            return
-    root.after(100, update_bar, parserThread)
+            # Auto-scroll to active
+            # self.tree.see(iid) 
+        except Exception:
+            pass # Item might be deleted
 
+    def clear_finished(self):
+        for iid in self.tree.get_children():
+            values = self.tree.item(iid)['values']
+            if values[1] == "Completed":
+                self.tree.delete(iid)
+                
+    # Checkbox logic simulation
+    def on_tree_click(self, event):
+        region = self.tree.identify("region", event.x, event.y)
+        if region == "tree": # The icon/text column
+            iid = self.tree.identify_row(event.y)
+            if iid:
+                curr = self.tree.item(iid)['text']
+                # Toggle
+                new_text = "☐" if curr == "☑" else "☑"
+                self.tree.item(iid, text=new_text)
 
-# Code for downloading
-progressQ = Queue.Queue()
-q = Queue.Queue()
-def process():
-    print("URL:", listURL.get())
-    print("SAVE TO:", savePath.get())
-    url = listURL.get()
-    if(url != ""):
-        # Reset progress bars
-        pb["value"] = 0
-        downloadPb["value"] = 0
-        
-        parserThread = Thread(target = listParser, args = [url, q, progressQ])
-        parserThread.daemon = True
-        parserThread.start()        
-        update_bar(parserThread)
-    else:
-        print("Nothing to get!!!")
-    # print("Ikes!!!")
+if __name__ == "__main__":
+    root = Tk()
+    app = YoutubeDownloaderApp(root)
+    # Bind toggle check
+    app.tree.bind("<Button-1>", app.on_tree_click)
     
-
-root = Tk()
-root.resizable(width=FALSE, height=FALSE)
-# root.geometry('{}x{}'.format(600,400))
-root.title("Youtube Playlist using IDM")
-
-mainframe = ttk.Frame(root, padding="3 3 12 12")
-mainframe.grid(column=0, row=0, sticky=(N, W, E, S))
-mainframe.columnconfigure(0, weight=1)
-mainframe.rowconfigure(0, weight=1)
-
-listURL = StringVar()
-savePath = StringVar()
-downloadMode = StringVar()
-autoStartVar = BooleanVar()
-autoStartVar.set(True)  # Default to auto-start
-
-# Default Path:
-listURL.set("")
-
-# Default Save path
-savePath.set(os.getcwd())
-# savePath.set("C:/Users/Bishal/Shared/Youtube/")
-
-# Default download mode
-downloadMode.set("hq")  # Default to high quality
-
-# Labels
-ttk.Label(mainframe, text = "Playlist URL: ").grid(column = 1, row=1, sticky = E)
-ttk.Label(mainframe, text = "Save Path: ").grid(column = 1, row=2, sticky = E)
-ttk.Label(mainframe, text = "Download Mode: ").grid(column = 1, row=3, sticky = E)
-ttk.Label(mainframe, text = "Parse Progress: ").grid(column = 1, row=4, sticky = E)
-ttk.Label(mainframe, text = "Download Progress: ").grid(column = 1, row=5, sticky = E)
-
-inputWid = 100
-# URL Input
-url_entry = ttk.Entry(mainframe, textvariable = listURL, width = inputWid)
-url_entry.grid(column = 2, row=1, columnspan = 4, sticky = (W, E))
-
-# Path Input
-path_entry = ttk.Entry(mainframe,textvariable = savePath)
-path_entry.grid(column = 2, row=2, columnspan = 3,sticky = (W, E))
-
-# Download Mode Selection (Radio Buttons)
-modeFrame = ttk.LabelFrame(mainframe, text="Download Settings", padding="3 3 12 12")
-modeFrame.grid(column = 2, row=3, columnspan=3, sticky = (W, E))
-
-ttk.Radiobutton(modeFrame, text="High Quality Mode",
-                variable=downloadMode, value="hq").grid(column=0, row=0, sticky=W)
-
-# Resolution Selector (Only relevant for HQ mode)
-resolutionVar = StringVar()
-resolutionVar.set("1080p (HD)") # Default
-resCombo = ttk.Combobox(modeFrame, textvariable=resolutionVar, state="readonly", width=15)
-resCombo['values'] = ("Best (4K/8K)", "1440p (2K)", "1080p (HD)", "720p (HD)", "480p")
-resCombo.grid(column=1, row=0, sticky=W, padx=5)
-
-ttk.Radiobutton(modeFrame, text="IDM Mode (Legacy)",
-                variable=downloadMode, value="idm").grid(column=0, row=1, sticky=W, pady=5)
-
-# Auto Start Checkbox
-ttk.Checkbutton(modeFrame, text="Auto Start Download", variable=autoStartVar, onvalue=True, offvalue=False).grid(column=0, row=2, sticky=W, columnspan=2)
-
-# Progressbar - Parse
-pb = ttk.Progressbar(mainframe, orient=HORIZONTAL, mode='determinate')
-pb.grid(column = 2, row=4, sticky = (W, E), columnspan=3)
-pb["value"] = 0
-pb["maximum"] = 100
-
-# Progressbar - Download
-downloadPb = ttk.Progressbar(mainframe, orient=HORIZONTAL, mode='determinate')
-downloadPb.grid(column = 2, row=5, sticky = (W,E), columnspan=3)
-downloadPb["value"] = 0
-downloadPb["maximum"] = 100
-
-# Buttons
-ttk.Button(mainframe, text = "Change Folder", command = askdirectory).grid(column = 5, row=2, sticky = (W,E))
-ttk.Button(mainframe, text = "Parse", command = process).grid(column = 5, row=4, sticky = (W,E))
-ttk.Button(mainframe, text = "Download", command = downloadVideos).grid(column = 5, row=5, sticky = (W,E))
-
-# Global variables
-downStatus = 0
-allDownComplete = True
-downGenerator = None
-
-for child in mainframe.winfo_children(): child.grid_configure(padx=5, pady=5)
-url_entry.focus()
-
-root.mainloop()
-
+    root.mainloop()
