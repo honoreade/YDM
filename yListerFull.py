@@ -57,6 +57,11 @@ def crawl(url):
                         video_url = f"https://www.youtube.com/watch?v={entry['id']}"
                         final_url.append(video_url)
                         print(video_url)
+            # Handle single video URL
+            elif 'id' in playlist_info:
+                video_url = f"https://www.youtube.com/watch?v={playlist_info['id']}"
+                final_url.append(video_url)
+                print(f"Found single video: {video_url}")
             else:
                 print('No videos found in playlist.')
                 return [], 0
