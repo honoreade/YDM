@@ -397,6 +397,11 @@ def update_bar(parserThread):
         if p == 100:            
             parserThread.join()
             print("Parsing Complete")
+            
+            # Auto-start download if enabled
+            if autoStartVar.get():
+                print("Auto-starting download...")
+                downloadVideos()
             return
     root.after(100, update_bar, parserThread)
 
@@ -409,6 +414,10 @@ def process():
     print("SAVE TO:", savePath.get())
     url = listURL.get()
     if(url != ""):
+        # Reset progress bars
+        pb["value"] = 0
+        downloadPb["value"] = 0
+        
         parserThread = Thread(target = listParser, args = [url, q, progressQ])
         parserThread.daemon = True
         parserThread.start()        
@@ -431,6 +440,8 @@ mainframe.rowconfigure(0, weight=1)
 listURL = StringVar()
 savePath = StringVar()
 downloadMode = StringVar()
+autoStartVar = BooleanVar()
+autoStartVar.set(True)  # Default to auto-start
 
 # Default Path:
 listURL.set("")
@@ -474,6 +485,9 @@ resCombo.grid(column=1, row=0, sticky=W, padx=5)
 
 ttk.Radiobutton(modeFrame, text="IDM Mode (Legacy)",
                 variable=downloadMode, value="idm").grid(column=0, row=1, sticky=W, pady=5)
+
+# Auto Start Checkbox
+ttk.Checkbutton(modeFrame, text="Auto Start Download", variable=autoStartVar, onvalue=True, offvalue=False).grid(column=0, row=2, sticky=W, columnspan=2)
 
 # Progressbar - Parse
 pb = ttk.Progressbar(mainframe, orient=HORIZONTAL, mode='determinate')
