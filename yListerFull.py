@@ -36,7 +36,7 @@ class YoutubeDownloaderApp:
         self.auto_start = BooleanVar(value=True)
         self.is_parsing = False
         self.is_downloading = False
-        self.pause_event = False # Simple flag for pause (not fully implemented in yt-dlp flow yet without complex threading)
+        self.is_paused = False # Pause flag
         
         # Data
         self.videos_dict = {} # Map iid -> video_data
@@ -129,7 +129,9 @@ class YoutubeDownloaderApp:
         controls_frame.pack(side=RIGHT)
 
         ttk.Button(controls_frame, text="Start Download", command=self.start_download_manager).pack(side=LEFT, padx=2)
-        # ttk.Button(controls_frame, text="Pause", command=self.toggle_pause).pack(side=LEFT, padx=2) # Processing pause is tricky without Process killing
+        self.pause_btn = ttk.Button(controls_frame, text="Pause Queue", command=self.toggle_pause)
+        self.pause_btn.pack(side=LEFT, padx=2)
+        ttk.Button(controls_frame, text="Retry Failed", command=self.retry_failed).pack(side=LEFT, padx=2)
         ttk.Button(controls_frame, text="Clear Finished", command=self.clear_finished).pack(side=LEFT, padx=2)
 
     def browse_folder(self):
@@ -231,20 +233,17 @@ class YoutubeDownloaderApp:
 
     def download_manager_loop(self):
         # Continuously look for 'queued' items in treeview and start download
-        # We process 1 at a time or thread pool? Let's do 1 at a time for safety first (sequential download is stable)
-        # Maybe 2 concurrent? Let's stick to sequential to avoid IP bans, but "Parsing while downloading" is the key feature.
         
         while True:
+            # Check Pause
+            if self.is_paused:
+                time.sleep(1)
+                continue
+
             # Find next queued item
             next_iid = None
             
-            with self.ui_lock:
-                # We need to iterate tree items safely. 
-                # Tkinter objects aren't thread safe, but we can't access them here easily without deadlock risk if we aren't careful.
-                # Actually, standard practice: get list of IIDs in main thread?
-                pass 
-                
-            # Better: Ask main thread for next queued item
+            # Ask main thread for next queued item
             q = Queue.Queue()
             self.root.after(0, lambda: q.put(self.get_next_queued_iid()))
             next_iid = q.get()
@@ -264,7 +263,39 @@ class YoutubeDownloaderApp:
                 time.sleep(1)
 
         self.is_downloading = False
-        self.root.after(0, lambda: self.status_label.config(text="All downloads complete."))
+        self.root.after(0, lambda: self.status_label.config(text="All active downloads complete."))
+
+    def toggle_pause(self):
+        self.is_paused = not self.is_paused
+        if self.is_paused:
+            self.pause_btn.config(text="Resume Queue")
+            self.status_label.config(text="Queue Paused")
+        else:
+            self.pause_btn.config(text="Pause Queue")
+            self.status_label.config(text="Resuming...")
+            
+            # Re-queue paused items
+            for iid in self.tree.get_children():
+                status = self.tree.item(iid)['values'][1]
+                if status == "Paused":
+                    self.update_row(iid, status="Queued", speed_eta="-")
+
+
+    def retry_failed(self):
+        # Find all "Error" or "Skipped" and set to Queued
+        reset_count = 0
+        for iid in self.tree.get_children():
+            status = self.tree.item(iid)['values'][1]
+            if status in ["Error", "Skipped", "Cancelled"]:
+                self.update_row(iid, status="Queued", progress="Waiting...", speed_eta="-")
+                self.tree.item(iid, text="☑") # Re-check it
+                reset_count += 1
+        
+        if reset_count > 0:
+            self.status_label.config(text=f"Reset {reset_count} items. Starting download...")
+            self.start_download_manager()
+        else:
+            messagebox.showinfo("Info", "No failed items to retry.")
 
     def get_next_queued_iid(self):
         # Run on main thread
@@ -303,25 +334,35 @@ class YoutubeDownloaderApp:
         safe_filename = filename # Extension handled by yt-dlp
         output_template = os.path.join(output_path, f"{safe_filename}.%(ext)s")
 
+        # ANSI Escape code stripper
+        ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
         def progress_hook(d):
+            # Immediate Pause Check
+            if self.is_paused:
+                raise Exception("_PAUSED_BY_USER_")
+
             if d['status'] == 'downloading':
                 try:
                     p = d.get('_percent_str', '0%').strip()
                     s = d.get('_speed_str', '0B/s').strip()
-                    e = d.get('_eta_str', '?:??').strip()
+                    eta = d.get('_eta_str', '?:??').strip()
                     size = d.get('_total_bytes_str') or d.get('_total_bytes_estimate_str') or "?"
                     
-                    # Construct progress bar visual
-                    # Simple text for now: "|||||.... 45%"
+                    # Clean ANSI codes
+                    p = ansi_escape.sub('', p)
+                    s = ansi_escape.sub('', s)
+                    eta = ansi_escape.sub('', eta)
+                    size = ansi_escape.sub('', size)
                     
                     self.root.after(0, lambda: self.update_row(
                         iid=iid,
                         status="Downloading",
                         size=size,
                         progress=p,
-                        speed_eta=f"{s} - {e}"
+                        speed_eta=f"{s} - {eta}"
                     ))
-                except:
+                except Exception as ex:
                     pass
             elif d['status'] == 'finished':
                 self.root.after(0, lambda: self.update_row(iid, status="Processing...", progress="100%"))
@@ -333,11 +374,17 @@ class YoutubeDownloaderApp:
             'ffmpeg_location': FFMPEG_PATH,
             'progress_hooks': [progress_hook],
             'no_warnings': True,
-            'ignoreerrors': True,
-            'quiet': True, # We use hooks for output
+            'ignoreerrors': False, 
+            'quiet': True, 
             'format_sort': ['res', 'ext:mp4:m4a'],
             'ignore_config': True,
             'cookiesfrombrowser': None,
+            
+            # Fail fast settings
+            'socket_timeout': 10,
+            'retries': 3,
+            'fragment_retries': 3,
+            
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             },
@@ -348,7 +395,11 @@ class YoutubeDownloaderApp:
                 ydl.download([url])
             self.root.after(0, lambda: self.update_row(iid, status="Completed", progress="100%", speed_eta="Done"))
         except Exception as e:
-            self.root.after(0, lambda: self.update_row(iid, status="Error", speed_eta=str(e)))
+            err_msg = str(e)
+            if "_PAUSED_BY_USER_" in err_msg:
+                self.root.after(0, lambda: self.update_row(iid, status="Paused", speed_eta="Paused"))
+            else:
+                self.root.after(0, lambda: self.update_row(iid, status="Error", speed_eta=err_msg))
 
 
     def update_row(self, iid, status=None, size=None, progress=None, speed_eta=None):
