@@ -15,11 +15,10 @@ from threading import Thread, Lock
 import queue as Queue
 import time
 import datetime
+import shutil
 
-# FFmpeg path
-FFMPEG_PATH = r"C:\ffmpeg-2026-01-12-git-21a3e44fbe-full_build\bin"
-if FFMPEG_PATH not in os.environ.get('PATH', ''):
-    os.environ['PATH'] = FFMPEG_PATH + os.pathsep + os.environ.get('PATH', '')
+# FFmpeg path - auto detect from system PATH (where winget installs it)
+FFMPEG_PATH = shutil.which("ffmpeg") or "ffmpeg"
 
 class YoutubeDownloaderApp:
     def __init__(self, root):
@@ -200,8 +199,11 @@ class YoutubeDownloaderApp:
                     self.process_parsed_entry(info)
                     
         except Exception as e:
-            print(f"Parse Error: {e}")
-            self.root.after(0, lambda: messagebox.showerror("Error", f"Parse error: {e}"))
+            err_msg = str(e)
+            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            err_msg = ansi_escape.sub('', err_msg)
+            print(f"Parse Error: {err_msg}")
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Parse error: {err_msg}"))
             
         self.is_parsing = False
         self.root.after(0, lambda: self.status_label.config(text="Parsing complete."))
@@ -396,6 +398,10 @@ class YoutubeDownloaderApp:
             self.root.after(0, lambda: self.update_row(iid, status="Completed", progress="100%", speed_eta="Done"))
         except Exception as e:
             err_msg = str(e)
+            # Remove ANSI color codes that might come from yt-dlp error string
+            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            err_msg = ansi_escape.sub('', err_msg)
+            
             if "_PAUSED_BY_USER_" in err_msg:
                 self.root.after(0, lambda: self.update_row(iid, status="Paused", speed_eta="Paused"))
             else:
